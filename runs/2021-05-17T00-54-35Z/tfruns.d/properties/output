@@ -1,0 +1,40 @@
+
+> library(keras)
+
+> library(dplyr)
+
+> library(tfdatasets)
+
+> load("data/train_obj/data_deep.RData")
+
+> #load("data/train_obj/tensor_deep.RData")
+> # 
+> df_to_dataset <- function(df, shuffle = TRUE, batch_size = 32) {
++   ds <- df %>%
++     tensor_slic .... [TRUNCATED] 
+
+> batch_size <- 700 # nrow(train)/50 # 700
+
+> train_ds   <- df_to_dataset(train_deep, batch_size = batch_size)
+
+> eval_ds    <- df_to_dataset(eval_deep, shuffle = FALSE, batch_size = batch_size)
+
+> test_ds    <- df_to_dataset(test_deep, shuffle = FALSE, batch_size = batch_size)
+
+> #save(train_ds, test_ds, eval_ds, file="data/train_obj/tensor_deep.RData")
+> 
+> spec <- feature_spec(train_ds, job_type ~ .) %>% 
++   step_numeric_c .... [TRUNCATED] 
+
+> spec_prep <- fit(spec)
+
+> FLAGS <- tfruns::flags(
++   # nodes
++   flag_numeric("nodes1", 32),
++   flag_numeric("nodes2", 64),
++   flag_numeric("nodes3", 64),
++   flag_numeric .... [TRUNCATED] 
+
+> model <- keras_model_sequential() %>% 
++   layer_dense_features(dense_features(spec_prep)) %>% 
++   layer_dense(units = FLAGS$nodes1, activation = " ..." ... [TRUNCATED] 

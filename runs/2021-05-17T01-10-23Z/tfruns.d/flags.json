@@ -1,0 +1,10 @@
+{
+  "nodes1": 32,
+  "nodes2": 32,
+  "nodes3": 32,
+  "nodes4": 64,
+  "reg1": 0.25,
+  "reg2": 0.25,
+  "lrannea1": 0.001,
+  "lrannea2": 0.05
+}
