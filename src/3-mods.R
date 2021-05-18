@@ -3,18 +3,14 @@
 
 # 0.0 LIBS AND READ
 library(readr)
-library(recipes)
+library(dplyr)
 library(tensorflow)
-library(embed) 
 library(reticulate)
 library(caret)
 library(rsample)
 library(doParallel)
 library(Metrics)
 library(tfruns)
-library(stringr)
-library(forcats)
-library(lubridate)
 
 source("src/funs/df_to_dataset.R")
 

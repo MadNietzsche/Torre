@@ -12,8 +12,6 @@ library(stringr)
 library(purrr)
 library(forcats)
 library(tidytext)
-library(patchwork)
-library(ggsci)
 
 top_chars <- function(col, n=12){
   
@@ -23,14 +21,15 @@ top_chars <- function(col, n=12){
 
 # 1.0 READ DATA AND FIRST IMPRESSIONS ----
 
+# 1.1 Read ----
 torre <- read_csv("data/reed_uk.csv") %>% 
   mutate(city=fct_infreq(factor(str_to_title(city))), category=fct_infreq(factor(category)),
          post_date=mdy(post_date), month=month(post_date), weekday=wday(post_date))
 
-# 1.1 Summary  ----
-
+# 1.2 Summary  ----
 glimpse(torre)
 summary(torre)
+
 
 # 2.0 EDA ----
 
@@ -38,13 +37,13 @@ summary(torre)
 
 empty <-map_dbl(setNames(1:ncol(torre), names(torre)), ~sum(is.na(torre[,.x])))
 
-round(empty/nrow(torre), 2)
+empty_ls <- list(empty=empty, empty_pr=round(empty/nrow(torre), 2))
 
 # Job board and geo must be deleted
 uniq_vals <- map_dbl(setNames(1:ncol(torre), names(torre)), ~length(unique(torre[[.x]])))
 
 # Only the first 3 months have a lot of data
-torre %>% count(month(post_date)) %>% arrange(desc(n))
+months_counts <- torre %>% count(month(post_date)) %>% arrange(desc(n))
 
 # The most feasible predictor is job category, which only has 9 levels
 # The EDA will continue by putting this variables at the front
@@ -129,6 +128,8 @@ count_words <- words_desc %>%
   count(job_type, word) %>% 
   group_by(job_type) %>% 
   top_n(20, n) %>% ungroup()
+
+write_rds(count_words, file="res/eda_words.rds")
 
 p6 <- count_words %>% 
   ggplot(aes(reorder_within(word, n, job_type), n, fill=job_type)) + geom_col() +

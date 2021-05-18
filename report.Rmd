@@ -1,0 +1,495 @@
+---
+title: "Torre Test"
+subtitle: "A prediction model of Job Type"
+author: "Antonio Alvarez"
+date: "18.05.2021"
+output: html_document
+---
+```{css, echo=FALSE}
+
+pre {
+    display: block;
+    padding: 9.5px;
+    margin: 0 0 15px;
+    font-size: 13px;
+    line-height: 1.42857143;
+    color: #333;
+    word-break: break-all;
+    word-wrap: break-word;
+    background-color: #f5f5f5;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+```
+
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE, echo=-1}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.height = 8, fig.width = 10)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(stringr)
+library(purrr)
+library(forcats)
+library(tidytext)
+library(recipes)
+library(tensorflow)
+library(embed) 
+library(reticulate)
+library(caret)
+library(rsample)
+library(doParallel)
+library(Metrics)
+library(tfruns)
+
+
+```
+
+## Introduction
+
+As a test, I was given a dataset of London job postings from August 2017 to March 2018. The problem was to design a prediction model from the data. I have to choose the predictors and the response. It could be any of them.
+
+```{r}
+
+# Read data and add order to certain vars by frequency
+torre <- read_csv("data/reed_uk.csv") %>% 
+  mutate(city=fct_infreq(factor(str_to_title(city))), category=fct_infreq(factor(category)),
+         post_date=mdy(post_date), month=month(post_date), weekday=wday(post_date))
+
+```
+
+## Exploratory Data Analysis
+
+First, we need to start exploring it. This is a crucial step in every data analysis. Even more so in this case as no instructions or info about the date were given.
+
+```{r}
+
+glimpse(torre)
+
+```
+From a first glance, it is clear that most of the data are strings. There is also a date column, which has already been processed to output the month and the weekday of each posting. 
+
+```{r}
+# Proportion of empty values on each column
+round(map_dbl(setNames(1:ncol(torre), names(torre)), 
+              ~sum(is.na(torre[,.x])))/nrow(torre), 2)
+
+```
+
+Most columns are filled, except for job requirements. With more than 50% empty, its exclusion on the analysis is guaranteed from the start.
+
+
+```{r}
+# Count the number of unique values by column
+map_dbl(setNames(1:ncol(torre), names(torre)), 
+        ~length(unique(torre[[.x]])))
+
+```
+
+All of the categories seems to be quite sparse. `geo` and `job_board` are the only variables with one value. Everything else has a high number. `job_description` is the one with the most unique values. It is also in fact the richest with detail as it contains detailed information on the postings. Some of them are paragraphs long and has full potential for text mining. 
+
+The most available response variable is `job_type` because it has the smallest number of values. Hence, I choose it as my response variable for this exercise and the EDA will continue with it as the most prominent variable.
+
+```{r, echo=-8}
+# Extracts the nth most frequent values from a variable
+top_chars <- function(col, n=12){
+  
+  torre %>% count(!!sym(col)) %>% arrange(desc(n)) %>% head(n) %>% pull(!!sym(col))
+  
+}
+
+top_city <- top_chars("city")
+top_city
+```
+
+
+```{r}
+
+torre %>% 
+  filter(city %in% top_city) %>% #Only the most frequent cities
+  count(city, job_type) %>% 
+  ggplot(aes(job_type, n)) + geom_col(fill="steelblue") +
+  facet_wrap(~city, scales = "free_x") + coord_flip() +
+  labs(y="Count", x="Job Type") +
+  theme_bw() +
+  theme(strip.background = element_blank(), 
+        strip.text = element_text(face = "bold"))
+
+```
+
+Regardless of city, the most frequent job type is Permanent full-time. There are some slight differences between the counts of Temporary Jobs in certain cities. East London and Glasgow, for example, have more diversity on temporary jobs than places like Reading or West London. 
+
+```{r}
+
+top_state <- top_chars("state")
+
+torre %>% 
+  filter(state %in% top_state) %>% 
+  count(state, job_type) %>% 
+  ggplot(aes(job_type, n)) + geom_col(fill="darkseagreen") +
+  facet_wrap(~state, scales = "free_x") + coord_flip() +
+  labs(y="Count", x="Job Type") +
+  theme_bw() +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold"))
+
+```
+As above, Surrey and Kent have a different Temporary job landscape as London. 
+
+Although in all regions Permanent Full time is the dominant posting, there seems to be a shift on Temporary Jobs depending on its geographic location. 
+
+```{r}
+
+top_category <- top_chars("category")
+
+torre %>% 
+  filter(category %in% top_category) %>% 
+  count(category, job_type) %>% 
+  ggplot(aes(job_type, n)) + geom_col(fill="lightgoldenrod") +
+  facet_wrap(~category, scales = "free_x") + coord_flip() +
+  labs(y="Count", x="Job Type") +
+  theme_bw() +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold"))
+
+```
+
+Here it is seen the biggest differences on distributions so far on `job_type`. For instance, education jobs has the highest proportion of temporary full-time jobs, while health and social care jobs have more diversity on them. The predictor `category` can become very important in the modeling process.
+
+```{r}
+
+torre %>% 
+  #filter(month<=3) %>% # There is not much data outside these months
+  mutate(month=month(post_date, label = TRUE)) %>% 
+  count(month, job_type) %>% 
+  ggplot(aes(job_type, n)) + geom_col(fill = "lightsalmon") +
+  facet_wrap(~month, scales = "free_x") + coord_flip() +
+  labs(y="Count", x="Job Type") +
+  theme_bw() +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold"))
+
+```
+
+Almost no data is visible for months other than January, February and March. The dataframe should contain only such months to remove non frequent data values.
+
+```{r}
+
+torre %>%
+  mutate(w=wday(post_date, label = TRUE)) %>% 
+  count(w, job_type) %>% 
+  ggplot(aes(job_type, n)) + geom_col(fill="burlywood") +
+  facet_wrap(~w) + coord_flip() +
+  labs(y="Count", x="Job Type") +
+  theme_bw() +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold"))
+
+```
+
+Not surprisingly, most posting happen during working days. However, an important amount are also posted on weekends, more on Sunday than on Saturdays.
+
+
+For the variable `description`, there are number of possibilities for analysis. Due to the limited amount of time, I will show the counts of the most important words by `job_type`.
+
+
+```{r, eval=FALSE}
+# Get all the words from job description and remove stop words
+words_desc <- torre %>% 
+  select(job_type, job_description) %>% 
+  #group_by(job_type) %>% 
+  unnest_tokens(word, job_description) %>% 
+  anti_join(stop_words %>% 
+              bind_rows(tibble(word=c("2", "3", "â", "II"), lexicon="OWN")))
+
+# Count the words by job type
+count_words <- words_desc %>% 
+  count(job_type, word) %>% 
+  group_by(job_type) %>% 
+  top_n(20, n) %>% ungroup()
+
+```
+
+
+```{r, echo=FALSE}
+
+count_words <- read_rds("res/eda_words.rds")
+
+```
+
+```{r}
+
+count_words %>% 
+  ggplot(aes(reorder_within(word, n, job_type), n, fill=job_type)) + geom_col() +
+  facet_wrap(~job_type, scales="free")  +
+  coord_flip() + labs(x="Words", y="Count") +
+  scale_x_reordered() +
+  guides(fill=FALSE) +
+  theme_bw() +
+  theme(strip.background = element_blank(), strip.text = element_text(face = "bold"))
+
+
+```
+
+Here we can see there is definitely a difference between the language of each job type. We can extract a lot of information from this variable through techniques such as Correspondence Analysis. 
+
+As it has been shown, there is potential structure on the data that can be exploited to answer my question. However, due to limited time and computational resources, I will have to model with just a part of the predictors, primarily `city`, `state`, `category`, `weekday`, `month` and `job_description`.
+
+## Preprocessing
+
+I will develop 5 splits: 2 slice of the whole data for Non-Neural Network algorithms and 3 slices for a Tensorflow Neural Network.
+
+```{r, eval=FALSE}
+
+# Caret sets
+set.seed(2001)
+splits   <- initial_split(torre, prop = 0.7)
+train_df <- training(splits)
+test_df  <- testing(splits)
+
+# Tensorflow IDs, sets will be added shortly
+train_ids <- sample(1:nrow(torre), size = 0.7*nrow(torre))
+dev_ids <- split(setdiff(1:nrow(torre), train_ids),c(1,2))
+
+
+```
+
+The package `recipes` is great help to construct this processing pipeline elegantly. It has several steps that will be taken sequentially.
+
+```{r, eval=FALSE}
+# Set up the formula
+torre_rec <- recipe(job_type ~ city + state + category + weekday + month + job_description, data = torre) %>% 
+  # Extract features from description
+  step_mutate(commas=str_count(job_description, ","), exclam=str_count(job_description, "!"),
+              money=str_count(job_description, "£|$"), dash=str_count(job_description, "-"), 
+              colon=str_count(job_description, ":"), parenthesis=str_count(job_description, "\\(")) %>%
+  # Create Embed Feature through NN
+  step_embed(
+    city, state, category,
+    outcome = vars(job_type),
+    num_terms = 5,
+    hidden_units = 30,
+    predictors = NULL,
+    options = embed_control(
+      loss = "binary_crossentropy",
+      epochs = 10,
+      validation_split = 0.2,
+      verbose = 0
+    )
+  ) %>%
+  # Remove Description and Zero Var cols
+  step_rm(job_description) %>% 
+  step_zv(all_predictors()) %>% 
+  # Scaling
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) %>% 
+  prep()
+
+
+```
+
+
+Above there is a special step that is crucial on this assignment. In `step_embed`, a set of numeric columns are developed using Neural Networks that decompose the complex string column structure into features readable for any algorithm. 
+
+After the recipe is designed, the data can be 'baked' on it.
+
+```{r, eval=FALSE}
+
+# Caret Baking
+train_bake <- bake(torre_rec, train_df)
+test_bake  <- bake(torre_rec, test_df)
+
+# Tensorflow baking
+train_deep <- bake(torre_rec, torre[train_ids,]) %>% mutate(job_type=as.numeric(job_type)-1)
+eval_deep  <- bake(torre_rec, torre[dev_ids[[1]], ]) %>% mutate(job_type=as.numeric(job_type)-1)
+test_deep  <- bake(torre_rec, torre[dev_ids[[2]], ]) %>% mutate(job_type=as.numeric(job_type)-1)
+
+```
+
+
+Now, let's set up the caret training workflow. First, the learning control and the search grids for each algorithm.
+
+```{r, eval=FALSE}
+# Control Settings
+control <- trainControl(method  = "cv", number  = 5)
+
+# Search Grids
+ridge_grid <- expand.grid(alpha  = 0, 
+                          lambda = 10^seq(10,-2, length = 50))
+
+lasso_grid <- expand.grid(alpha = 1,
+                          lambda = 10^seq(10,-2, length = 50))
+
+tree_grid  <- expand.grid(maxdepth = seq(5, 30, 5))
+
+rf_grid    <- expand.grid(mtry = seq(2, 5, 1))
+
+knn_grid <- expand.grid(k=seq(5, 50, 5))
+
+
+```
+
+
+
+Then, the models are trained with these settings. To increase speed, it is done in parallel.
+
+```{r, eval=FALSE}
+
+# Setting up cores for parallel training
+cores <- detectCores()
+cl <- makePSOCKcluster(cores-2)
+
+registerDoParallel(cl)
+
+set.seed(2001)
+
+# Training models
+tictoc::tic()
+## Ridge Regression
+ridge_mod <- train(job_type ~ ., data = train_bake, 
+                   trControl = control, method = "glmnet",
+                   tuneGrid  = ridge_grid, family = "multinomial", 
+                   type.multinomial = "grouped")
+
+## Lasso Regression
+lasso_mod <- train(job_type ~ ., data = train_bake,
+                   trControl = control, method = "glmnet",
+                   tuneGrid  = lasso_grid, family = "multinomial", 
+                   type.multinomial = "grouped")
+
+## Random Forest
+rf_mod    <- train(job_type ~ ., data = train_bake,
+                   trControl = control, method = "rf",
+                   tuneGrid  = rf_grid)
+
+## K Nearest Neighbors
+knn_mod   <- train(job_type ~ ., data = train_bake, 
+                   trControl = control, method = "knn",
+                   tuneGrid  = knn_grid)
+
+stopCluster(cl)
+tictoc::toc()
+
+
+```
+
+
+For the tensorflow model, the grid search is way more extensive. On the one below, there are at least 4000 models that can be trained with these parameters. Most of the time, it is decided at random which combination gets trained. On this case, only 1% of the models possible will be evaluated. 
+
+For this, the package `tfruns` does a great job making the sample of hyperparameters and then saving the model diagnostic so the best can be trained with those settings.
+
+
+```{r, eval=FALSE}
+
+# Definition of the hyperparameters
+runs <- tuning_run("src/nnet-grid.R", 
+                   flags = list(
+                     nodes1 = c(32, 64, 128),
+                     nodes2 = c(32, 64, 128),
+                     nodes3 = c(32, 64, 128),
+                     nodes4 = c(32, 64, 128),
+                     reg1 = c(0.25, 0.5, 0.75),
+                     reg2 = c(0.25, 0.5, 0.75),
+                     lrannea1 = c(0.001, 0.01, 0.1),
+                     lrannea2 = c(0.1, 0.05)
+                   ),
+                   sample = 0.01
+)
+
+# Best parameters are selected
+best_r <- ls_runs() %>% arrange(desc(metric_val_accuracy)) %>% filter(str_detect(run_dir, "^runs/2021"))%>% 
+  select(starts_with("flag"), metric_accuracy, metric_val_accuracy) %>% 
+  head(2)
+
+
+```
+
+The best settings are then used to fit the best model found through the runs.
+
+```{r, eval=FALSE}
+# Makes structured data available in the keras framework
+source("src/funs/df_to_dataset.R")
+
+# Batch set up
+batch_size <- 700 # nrow(train)/50 # 700
+train_ds   <- df_to_dataset(train_deep, batch_size = batch_size)
+eval_ds    <- df_to_dataset(eval_deep, shuffle = FALSE, batch_size = batch_size)
+test_ds    <- df_to_dataset(test_deep, shuffle = FALSE, batch_size = batch_size)
+
+spec <- feature_spec(train_ds, job_type ~ .) %>% 
+  step_numeric_column(all_numeric())
+
+spec_prep <- fit(spec)
+
+# Model structure
+nn_mod <- keras_model_sequential() %>% 
+  layer_dense_features(dense_features(spec_prep)) %>% 
+  layer_dense(units = best_r$flag_nodes1[1], activation = "relu") %>% 
+  layer_batch_normalization() %>% 
+  layer_dense(units = best_r$flag_nodes2[1], activation = "relu", 
+              kernel_regularizer = regularizer_l2(l = best_r$flag_reg1[1])) %>%
+  layer_batch_normalization() %>%
+  layer_dense(units = best_r$flag_nodes3[1], activation = "relu", 
+              kernel_regularizer = regularizer_l2(l = best_r$flag_reg2[1])) %>%
+  layer_batch_normalization() %>%
+  layer_dense(units = best_r$flag_nodes4[1], activation = "relu") %>% 
+  layer_batch_normalization() %>%
+  layer_dense(units = 9, activation = "softmax") %>% 
+  compile(
+    loss = loss_sparse_categorical_crossentropy, 
+    optimizer = optimizer_adam(lr = best_r$flag_lrannea1[1]), 
+    metrics = "accuracy"
+  ) 
+
+
+# Training history
+hist_nn <- nn_mod %>% 
+  fit(
+    dataset_use_spec(train_ds, spec = spec_prep),
+    epochs = 50, 
+    callbacks = list(callback_reduce_lr_on_plateau(factor = best_r$flag_lrannea2[1])),
+    validation_data = dataset_use_spec(eval_ds, spec_prep),
+    verbose = 2
+  )
+
+
+
+
+```
+
+After the modeling is finished, the test setting can be evaluated on all the models and check which one has the lowest error. Here comes a big question, which metric should be used? For Multilabel classification, the accuracy, precision and other metrics normal in binary tasks are calculated for each level minus 1, making the evaluation process harder than it was. One that stays the same is the AUC. Although it's not settle which metric shall be used in this task and other can be checked, for sake of simplicity only this one will be presented.
+
+```{r, eval=FALSE}
+# Save the predictions
+pred_ridge <- predict(ridge_mod, newdata = test_bake %>% select(-job_type))
+pred_lasso <- predict(lasso_mod, newdata = test_bake %>% select(-job_type))
+pred_rf    <- predict(rf_mod, newdata = test_bake %>% select(-job_type))
+pred_knn   <- predict(knn_mod, newdata = test_bake %>% select(-job_type))
+pred_nn    <- predict_classes(nn_mod, test_deep %>% select(-job_type))
+
+# Calculate the AUC
+pred_res <- c(ridge = multiclass.roc(response=test_bake$job_type, predictor=as.numeric(pred_ridge))$auc,
+              lasso = multiclass.roc(response=test_bake$job_type, predictor=as.numeric(pred_lasso))$auc,
+              rf    = multiclass.roc(response=test_bake$job_type, predictor=as.numeric(pred_rf))$auc,
+              knn   = multiclass.roc(response=test_bake$job_type, predictor=as.numeric(pred_knn))$auc,
+              nn    = multiclass.roc(response=test_deep$job_type, predictor=as.numeric(pred_nn))$auc)
+
+sort(pred_res, decreasing = TRUE)
+
+```
+
+```{r, echo=FALSE}
+load("res/pred.RData")
+
+sort(pred_res, decreasing = TRUE)
+
+```
+
+According to AUC the best model trained is the Random Forest with an AUC of 65, followed by K Nearest Neighbors. 
+
+## Final Remarks
+
+Although an AUC of 65 is not bad for a multiclass problem, there is still a lot of room to increase it. First, there is search to be on Random Forest, K Nearest Neighbors and Neural Networks. Perhaps, those new designs might increase our metrics' value. 
+
+Also, the description variable is full of opportunities. With more time, other features can be extracted from it such as log of odds for special keywords. 
+
+Computing power might also have helped on this task. However, I would recommend to keep searching on model designs and feature extraction as there is still a lot of possibilities to cover for them.
