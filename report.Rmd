@@ -493,3 +493,5 @@ Although an AUC of 65 is not bad for a multiclass problem, there is still a lot 
 Also, the description variable is full of opportunities. With more time, other features can be extracted from it such as log of odds for special keywords. 
 
 Computing power might also have helped on this task. However, I would recommend to keep searching on model designs and feature extraction as there is still a lot of possibilities to cover for them.
+
+Feel free to check this [project's repo]("https://github.com/MadNietzsche/Torre") for all the scripts and analysis made.
