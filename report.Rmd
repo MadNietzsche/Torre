@@ -494,4 +494,4 @@ Also, the description variable is full of opportunities. With more time, other f
 
 Computing power might also have helped on this task. However, I would recommend to keep searching on model designs and feature extraction as there is still a lot of possibilities to cover for them.
 
-Feel free to check this [project's repo]("https://github.com/MadNietzsche/Torre") for all the scripts and analysis made.
+Feel free to check this [project's repo](https://github.com/MadNietzsche/Torre) for all the scripts and analysis made.
